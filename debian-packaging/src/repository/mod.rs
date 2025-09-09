@@ -450,14 +450,14 @@ pub trait ReleaseReader: DataResolver + Sync {
     /// the compression format according to [Self::preferred_compression()].
     fn packages_entry(
         &self,
-        component: &str,
+        component: Option<&str>,
         architecture: &str,
         is_installer: bool,
     ) -> Result<PackagesFileEntry<'_>> {
         self.packages_indices_entries_preferred_compression()?
             .into_iter()
             .find(|entry| {
-                entry.component == component
+                entry.component.as_deref() == component
                     && entry.architecture == architecture
                     && entry.is_installer == is_installer
             })
@@ -499,7 +499,7 @@ pub trait ReleaseReader: DataResolver + Sync {
     /// Resolve packages given parameters to resolve a `Packages` file.
     async fn resolve_packages(
         &self,
-        component: &str,
+        component: Option<&str>,
         arch: &str,
         is_installer: bool,
     ) -> Result<BinaryPackageList<'static>> {
@@ -580,10 +580,10 @@ pub trait ReleaseReader: DataResolver + Sync {
     /// This returns the entry variant that is preferred given digest and compression
     /// settings. If no entry is found, [DebianError::RepositoryReadSourcesIndicesEntryNotFound]
     /// is returned.
-    fn sources_entry(&self, component: &str) -> Result<SourcesFileEntry<'_>> {
+    fn sources_entry(&self, component: Option<&str>) -> Result<SourcesFileEntry<'_>> {
         self.sources_indices_entries_preferred_compression()?
             .into_iter()
-            .find(|entry| entry.component == component)
+            .find(|entry| entry.component.as_deref() == component)
             .ok_or(DebianError::RepositoryReadSourcesIndicesEntryNotFound)
     }
 
@@ -625,7 +625,7 @@ pub trait ReleaseReader: DataResolver + Sync {
     ///
     /// This will call [Self::sources_entry] to resolve the [SourcesFileEntry] for the given
     /// `component` then will call [Self::resolve_sources_from_entry] to fetch and parse it.
-    async fn resolve_sources(&self, component: &str) -> Result<DebianSourcePackageList<'static>> {
+    async fn resolve_sources(&self, component: Option<&str>) -> Result<DebianSourcePackageList<'static>> {
         let entry = self.sources_entry(component)?;
 
         self.resolve_sources_from_entry(&entry).await

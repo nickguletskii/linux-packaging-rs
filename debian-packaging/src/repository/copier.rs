@@ -41,7 +41,7 @@ pub struct RepositoryCopierConfig {
     /// Filter of components to copy.
     ///
     /// If not defined, all components will be copied.
-    pub only_components: Option<Vec<String>>,
+    pub only_components: Option<Vec<Option<String>>>,
 
     /// Whether to copy binary packages.
     pub binary_packages_copy: Option<bool>,
@@ -91,7 +91,7 @@ struct GenericCopy {
 /// Various `set_*` methods exist to control the copying behavior.
 pub struct RepositoryCopier {
     /// Filter of components that should be copied.
-    only_components: Option<Vec<String>>,
+    only_components: Option<Vec<Option<String>>>,
 
     /// Whether to copy non-installer binary packages.
     binary_packages_copy: bool,
@@ -131,7 +131,7 @@ impl Default for RepositoryCopier {
 
 impl RepositoryCopier {
     /// Set an explicit list of components whose files to copy.
-    pub fn set_only_components(&mut self, components: impl Iterator<Item = String>) {
+    pub fn set_only_components(&mut self, components: impl Iterator<Item = Option<String>>) {
         self.only_components = Some(components.collect());
     }
 
@@ -395,7 +395,8 @@ impl RepositoryCopier {
             .resolve_package_fetches(
                 Box::new(move |entry| {
                     let component_allowed = if let Some(only_components) = &only_components {
-                        only_components.contains(&entry.component.to_string())
+                        only_components
+                            .contains(&entry.component.map(|component| component.to_string()))
                     } else {
                         true
                     };
@@ -447,7 +448,9 @@ impl RepositoryCopier {
             .resolve_source_fetches(
                 Box::new(move |entry| {
                     if let Some(only_components) = &only_components {
-                        only_components.contains(&entry.component.to_string())
+                        only_components.iter().any(|component_filter| {
+                            component_filter.as_deref() == entry.component.as_deref()
+                        })
                     } else {
                         true
                     }
@@ -654,6 +657,8 @@ async fn perform_copies(
 
 #[cfg(test)]
 mod test {
+    #[cfg(feature = "http")]
+    use crate::repository::http::HttpRepositoryClient;
     use {
         super::*,
         crate::repository::{
@@ -661,8 +666,6 @@ mod test {
             sink_writer::SinkWriter,
         },
     };
-    #[cfg(feature = "http")]
-    use crate::repository::http::HttpRepositoryClient;
 
     const DEBIAN_URL: &str = "http://snapshot.debian.org/archive/debian/20211120T085721Z";
 

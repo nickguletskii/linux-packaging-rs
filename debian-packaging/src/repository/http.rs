@@ -220,7 +220,7 @@ mod test {
 
         let release = root.release_reader("bullseye").await?;
 
-        let packages = release.resolve_packages("main", "amd64", false).await?;
+        let packages = release.resolve_packages(Some("main"), "amd64", false).await?;
         assert_eq!(packages.len(), 58606);
 
         let sources = release.sources_indices_entries()?;
@@ -277,7 +277,7 @@ mod test {
         let sources_entries = release.sources_indices_entries()?;
         assert_eq!(sources_entries.len(), 9);
 
-        let entry = release.sources_entry("main")?;
+        let entry = release.sources_entry(Some("main"))?;
         assert_eq!(entry.path, "main/source/Sources.xz");
         assert_eq!(
             entry.digest,
@@ -287,10 +287,10 @@ mod test {
             .unwrap()
         );
         assert_eq!(entry.size, 8616784);
-        assert_eq!(entry.component, "main");
+        assert_eq!(entry.component, Some("main".into()));
         assert_eq!(entry.compression, Compression::Xz);
 
-        let sources = release.resolve_sources("main").await?;
+        let sources = release.resolve_sources(Some("main")).await?;
         assert_eq!(sources.len(), 30952);
 
         let source = sources.iter().next().unwrap();

@@ -373,6 +373,15 @@ impl<'a> TryFrom<ReleaseFileEntry<'a>> for ContentsFileEntry<'a> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum PackagesFileType<'a> {
+    Standard,
+    FlatRepository {
+        /// The parsed component name (from the entry's path).
+        component: Cow<'a, str>,
+    },
+}
+
 /// A special type of [ReleaseFileEntry] that describes a `Packages` file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackagesFileEntry<'a> {
@@ -380,7 +389,7 @@ pub struct PackagesFileEntry<'a> {
     entry: ReleaseFileEntry<'a>,
 
     /// The parsed component name (from the entry's path).
-    pub component: Cow<'a, str>,
+    pub component: Option<Cow<'a, str>>,
 
     /// The parsed architecture name (from the entry's path).
     pub architecture: Cow<'a, str>,
@@ -390,6 +399,84 @@ pub struct PackagesFileEntry<'a> {
 
     /// Whether this refers to udeb packages used by installers.
     pub is_installer: bool,
+}
+
+impl<'a> PackagesFileEntry<'a> {
+    fn try_from_with_context(
+        entry: ReleaseFileEntry<'a>,
+        release_file: &'a ReleaseFile,
+    ) -> std::result::Result<Self, DebianError> {
+        let parts = entry.path.split('/').collect::<Vec<_>>();
+
+        let compression = match *parts
+            .last()
+            .ok_or(DebianError::ReleaseIndicesEntryWrongType)?
+        {
+            "Packages" => Compression::None,
+            "Packages.xz" => Compression::Xz,
+            "Packages.gz" => Compression::Gzip,
+            "Packages.bz2" => Compression::Bzip2,
+            "Packages.lzma" => Compression::Lzma,
+            _ => {
+                return Err(DebianError::ReleaseIndicesEntryWrongType);
+            }
+        };
+
+        if parts.len() == 1 {
+            // Flat repository format
+            // https://wiki.debian.org/DebianRepository/Format#Flat_Repository_Format
+            return Ok(Self {
+                entry,
+                component: None,
+                architecture: release_file
+                    .field_str("Architecture")
+                    .unwrap_or("amd64")
+                    .into(),
+                compression,
+                is_installer: false,
+            });
+        }
+        // The component and architecture are the directory components before the
+        // filename. The architecture is limited to a single directory component but
+        // the component can have multiple directories.
+
+        let architecture_component = *parts
+            .iter()
+            .rev()
+            .nth(1)
+            .ok_or(DebianError::ReleaseIndicesEntryWrongType)?;
+
+        let search = &entry.path[..entry.path.len()
+            - parts
+                .last()
+                .ok_or(DebianError::ReleaseIndicesEntryWrongType)?
+                .len()
+            - 1];
+        let component = &search[0..search
+            .rfind('/')
+            .ok_or(DebianError::ReleaseIndicesEntryWrongType)?];
+
+        // The architecture part is prefixed with `binary-`.
+        let architecture = architecture_component
+            .strip_prefix("binary-")
+            .ok_or(DebianError::ReleaseIndicesEntryWrongType)?;
+
+        // udeps have a `debian-installer` path component following the component.
+        let (component, is_udeb) =
+            if let Some(component) = component.strip_suffix("/debian-installer") {
+                (component, true)
+            } else {
+                (component, false)
+            };
+
+        Ok(Self {
+            entry,
+            component: Some(component.into()),
+            architecture: architecture.into(),
+            compression,
+            is_installer: is_udeb,
+        })
+    }
 }
 
 impl<'a> Deref for PackagesFileEntry<'a> {
@@ -467,7 +554,7 @@ impl<'a> TryFrom<ReleaseFileEntry<'a>> for PackagesFileEntry<'a> {
 
         Ok(Self {
             entry,
-            component: component.into(),
+            component: Some(component.into()),
             architecture: architecture.into(),
             compression,
             is_installer: is_udeb,
@@ -527,9 +614,49 @@ impl<'a> TryFrom<ReleaseFileEntry<'a>> for ReleaseReleaseFileEntry<'a> {
 pub struct SourcesFileEntry<'a> {
     entry: ReleaseFileEntry<'a>,
     /// The component the sources belong to.
-    pub component: Cow<'a, str>,
+    pub component: Option<Cow<'a, str>>,
     /// The compression format of the sources index.
     pub compression: Compression,
+}
+
+impl<'a> SourcesFileEntry<'a> {
+    fn try_from(entry: ReleaseFileEntry<'a>) -> std::result::Result<Self, DebianError> {
+        let parts = entry.path.split('/').collect::<Vec<_>>();
+
+        let compression = match *parts
+            .last()
+            .ok_or(DebianError::ReleaseIndicesEntryWrongType)?
+        {
+            "Sources" => Compression::None,
+            "Sources.gz" => Compression::Gzip,
+            "Sources.xz" => Compression::Xz,
+            "Sources.bz2" => Compression::Bzip2,
+            "Sources.lzma" => Compression::Lzma,
+            _ => {
+                return Err(DebianError::ReleaseIndicesEntryWrongType);
+            }
+        };
+
+        if parts.len() == 0 {
+            // Flat repository format
+            // https://wiki.debian.org/DebianRepository/Format#Flat_Repository_Format
+            return Ok(Self {
+                entry,
+                component: None,
+                compression,
+            });
+        }
+
+        let component = *parts
+            .first()
+            .ok_or(DebianError::ReleaseIndicesEntryWrongType)?;
+
+        Ok(Self {
+            entry,
+            component: Some(component.into()),
+            compression,
+        })
+    }
 }
 
 impl<'a> Deref for SourcesFileEntry<'a> {
@@ -578,7 +705,7 @@ impl<'a> TryFrom<ReleaseFileEntry<'a>> for SourcesFileEntry<'a> {
 
         Ok(Self {
             entry,
-            component: component.into(),
+            component: Some(component.into()),
             compression,
         })
     }
@@ -1058,7 +1185,7 @@ impl<'a> ReleaseFile<'a> {
                         }
                     }
 
-                    match PackagesFileEntry::try_from(entry.clone()) {
+                    match PackagesFileEntry::try_from_with_context(entry.clone(), self) {
                         Ok(packages) => {
                             return Ok(ClassifiedReleaseFileEntry::Packages(packages));
                         }
@@ -1165,7 +1292,7 @@ impl<'a> ReleaseFile<'a> {
     ) -> Option<Box<(dyn Iterator<Item = Result<PackagesFileEntry<'_>>> + '_)>> {
         if let Some(iter) = self.iter_index_files(checksum) {
             Some(Box::new(iter.filter_map(|entry| match entry {
-                Ok(entry) => match PackagesFileEntry::try_from(entry) {
+                Ok(entry) => match PackagesFileEntry::try_from_with_context(entry, self) {
                     Ok(v) => Some(Ok(v)),
                     Err(DebianError::ReleaseIndicesEntryWrongType) => None,
                     Err(e) => Some(Err(e)),
@@ -1182,14 +1309,14 @@ impl<'a> ReleaseFile<'a> {
         &self,
         checksum: ChecksumType,
         compression: Compression,
-        component: &str,
+        component: Option<&str>,
         arch: &str,
         is_installer: bool,
     ) -> Option<PackagesFileEntry<'_>> {
         if let Some(mut iter) = self.iter_packages_indices(checksum) {
             iter.find_map(|entry| {
                 if let Ok(entry) = entry {
-                    if entry.component == component
+                    if entry.component.as_deref() == component
                         && entry.architecture == arch
                         && entry.is_installer == is_installer
                         && entry.compression == compression
@@ -1233,12 +1360,12 @@ impl<'a> ReleaseFile<'a> {
         &self,
         checksum: ChecksumType,
         compression: Compression,
-        component: &str,
+        component: Option<&str>,
     ) -> Option<SourcesFileEntry<'_>> {
         if let Some(mut iter) = self.iter_sources_indices(checksum) {
             iter.find_map(|entry| {
                 if let Ok(entry) = entry {
-                    if entry.component == component && entry.compression == compression {
+                    if entry.component.as_deref() == component && entry.compression == compression {
                         Some(entry)
                     } else {
                         None
@@ -1548,7 +1675,7 @@ mod test {
                     .unwrap(),
                     size: 103223,
                 },
-                component: "contrib".into(),
+                component: Some("contrib".into()),
                 architecture: "all".into(),
                 compression: Compression::None,
                 is_installer: false
@@ -1565,7 +1692,7 @@ mod test {
                     .unwrap(),
                     size: 27334,
                 },
-                component: "contrib".into(),
+                component: Some("contrib".into()),
                 architecture: "all".into(),
                 compression: Compression::Gzip,
                 is_installer: false
@@ -1582,7 +1709,7 @@ mod test {
                     .unwrap(),
                     size: 23912,
                 },
-                component: "contrib".into(),
+                component: Some("contrib".into()),
                 architecture: "all".into(),
                 compression: Compression::Xz,
                 is_installer: false
@@ -1606,7 +1733,7 @@ mod test {
                     .unwrap(),
                     size: 0,
                 },
-                component: "contrib".into(),
+                component: Some("contrib".into()),
                 architecture: "all".into(),
                 compression: Compression::None,
                 is_installer: true
@@ -1620,7 +1747,7 @@ mod test {
         assert_eq!(sources.len(), EXPECTED_SOURCES);
 
         let entry = release
-            .find_sources_indices(ChecksumType::Sha256, Compression::Xz, "main")
+            .find_sources_indices(ChecksumType::Sha256, Compression::Xz, Some("main"))
             .unwrap();
         assert_eq!(
             entry,
@@ -1633,7 +1760,7 @@ mod test {
                     .unwrap(),
                     size: 8616784,
                 },
-                component: "main".into(),
+                component: Some("main".into()),
                 compression: Compression::Xz
             }
         );

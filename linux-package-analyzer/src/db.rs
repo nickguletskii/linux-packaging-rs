@@ -1072,7 +1072,7 @@ mod test {
         let release = client.release_reader("jammy").await?;
 
         let libc = release
-            .resolve_packages("main", "amd64", false)
+            .resolve_packages(Some("main"), "amd64", false)
             .await?
             .into_iter()
             .find(|package| matches!(package.package(), Ok("libc6")))

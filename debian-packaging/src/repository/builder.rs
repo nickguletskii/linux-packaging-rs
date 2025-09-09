@@ -1218,7 +1218,7 @@ mod test {
         let release = root.release_reader("bullseye").await.unwrap();
 
         let packages = release
-            .resolve_packages("main", "amd64", false)
+            .resolve_packages(Some("main"), "amd64", false)
             .await
             .unwrap();
 

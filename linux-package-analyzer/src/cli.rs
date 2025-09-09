@@ -311,11 +311,11 @@ async fn command_import_debian_repository(args: &ArgMatches) -> Result<()> {
             Box::new(move |entry| {
                 if !entry.is_installer
                     && architectures.contains(&entry.architecture.to_string())
-                    && components.contains(&entry.component.to_string())
+                    && components.iter().any(|component_filter| component_filter == entry.component.as_deref().unwrap_or(""))
                 {
                     eprintln!(
                         "fetching packages from {} {}",
-                        entry.component, entry.architecture
+                        entry.component.unwrap_or("".into()), entry.architecture
                     );
                     true
                 } else {
@@ -326,7 +326,7 @@ async fn command_import_debian_repository(args: &ArgMatches) -> Result<()> {
                         } else {
                             "non-installer"
                         },
-                        entry.component,
+                        entry.component.unwrap_or("".into()),
                         entry.architecture
                     );
                     false
