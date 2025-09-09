@@ -16,7 +16,10 @@ use {
     },
 };
 
-fn reader_from_filename(extension: &str, data: std::io::Cursor<Vec<u8>>) -> Result<Box<dyn Read>> {
+fn reader_from_filename(
+    extension: &str,
+    data: std::io::Cursor<Vec<u8>>,
+) -> Result<Box<dyn Read + Send>> {
     match extension {
         "" => Ok(Box::new(data)),
         ".gz" => Ok(Box::new(libflate::gzip::Decoder::new(data)?)),
@@ -127,11 +130,11 @@ pub enum BinaryPackageEntry {
 
 /// A reader for `control.tar` files.
 pub struct ControlTarReader {
-    archive: tar::Archive<Box<dyn Read>>,
+    archive: tar::Archive<Box<dyn Read + Send>>,
 }
 
 impl Deref for ControlTarReader {
-    type Target = tar::Archive<Box<dyn Read>>;
+    type Target = tar::Archive<Box<dyn Read + Send>>;
 
     fn deref(&self) -> &Self::Target {
         &self.archive
@@ -162,7 +165,7 @@ impl ControlTarReader {
 /// Ideally this type wouldn't exist. It is a glorified wrapper around
 /// [tar::Entries] that is needed to placate the borrow checker.
 pub struct ControlTarEntries<'a> {
-    entries: tar::Entries<'a, Box<dyn Read>>,
+    entries: tar::Entries<'a, Box<dyn Read + Send>>,
 }
 
 impl<'a> Iterator for ControlTarEntries<'a> {
@@ -182,11 +185,11 @@ impl<'a> Iterator for ControlTarEntries<'a> {
 /// Facilitates access to the raw [tar::Entry] as well as for obtaining a higher
 /// level type that decodes known files within `control.tar` files.
 pub struct ControlTarEntry<'a> {
-    inner: tar::Entry<'a, Box<dyn Read>>,
+    inner: tar::Entry<'a, Box<dyn Read + Send>>,
 }
 
 impl<'a> Deref for ControlTarEntry<'a> {
-    type Target = tar::Entry<'a, Box<dyn Read>>;
+    type Target = tar::Entry<'a, Box<dyn Read + Send>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
