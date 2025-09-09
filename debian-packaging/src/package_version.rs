@@ -231,8 +231,8 @@ fn lexical_compare(a: &str, b: &str) -> Ordering {
         let ord = match (a_chars.next(), b_chars.next()) {
             (Some('~'), Some('~')) => Ordering::Equal,
             (Some('~'), _) => Ordering::Less,
+            (_, Some('~')) => Ordering::Greater,
             (Some(_), None) => Ordering::Greater,
-            (None, Some('~')) => Ordering::Greater,
             (None, Some(_)) => Ordering::Less,
             (Some(a), Some(b)) if a.is_ascii_alphabetic() && !b.is_ascii_alphabetic() => {
                 Ordering::Less
@@ -342,6 +342,7 @@ impl Ord for PackageVersion {
 
 #[cfg(test)]
 mod test {
+    use crate::dependency::SingleDependency;
     use super::*;
 
     #[test]
@@ -434,5 +435,21 @@ mod test {
             }),
             Ordering::Greater
         );
+    }
+
+    #[test]
+    fn test_lexical_compare_tilde() {
+        assert_eq!(lexical_compare("+dfsg", "~pre"), Ordering::Greater);
+    }
+    #[test]
+    fn compare() {
+        let package_dfsg = PackageVersion::parse("0.0.6+dfsg-2.1build1").unwrap();
+        let package_pre18 = PackageVersion::parse("0.0.6~pre18").unwrap();
+        let package_pre19 = PackageVersion::parse("0.0.6~pre19").unwrap();
+        assert_eq!(package_dfsg.cmp(&package_pre19), Ordering::Greater);
+        let dep = SingleDependency::parse("test (>=0.0.6~pre19)").unwrap();
+        assert!(dep.package_satisfies("test", &package_dfsg, "all"));
+        assert!(dep.package_satisfies("test", &package_pre19, "all"));
+        assert!(!dep.package_satisfies("test", &package_pre18, "all"));
     }
 }
