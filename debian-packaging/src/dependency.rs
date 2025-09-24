@@ -29,9 +29,19 @@ pub static RE_DEPENDENCY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?x)
         # Package name is alphanumeric, terminating at whitespace, [ or (
-        (?P<package>[^\s\[(]+)
+        (?P<package>[^\s\[(:]+)
         # Any number of optional spaces.
         \s*
+        # Each package name is optionally followed by an architecture qualifier appended after a colon ‘:’
+        (?::\s*
+            # Optional negation operator.
+            (?P<arch_inline_negate>!)?
+            \s*
+            # The architecture. May have spaces to delimit multiple values.
+            (?P<arch_inline>[\w-]+)
+            # Any number of optional spaces.
+            \s*
+        )?
         # Relationships are within an optional parenthesis.
         (?:\(
             # Optional spaces after (
@@ -142,7 +152,8 @@ impl SingleDependency {
             _ => None,
         };
 
-        let architectures = match (caps.name("arch_negate"), caps.name("arch")) {
+        let architectures_inline = match (caps.name("arch_inline_negate"), caps.name("arch_inline"))
+        {
             (Some(_), Some(arch)) => Some((
                 true,
                 arch.as_str()
@@ -158,6 +169,30 @@ impl SingleDependency {
                     .collect::<Vec<_>>(),
             )),
             _ => None,
+        };
+        let architectures = match (
+            architectures_inline,
+            caps.name("arch_negate"),
+            caps.name("arch"),
+        ) {
+            (None, Some(_), Some(arch)) => Some((
+                true,
+                arch.as_str()
+                    .split_ascii_whitespace()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            (None, None, Some(arch)) => Some((
+                false,
+                arch.as_str()
+                    .split_ascii_whitespace()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>(),
+            )),
+            (Some(_), _, Some(arch)) => {
+                return Err(DebianError::DependencyParse(s.to_string()));
+            }
+            (architectures_inline, _, _) => architectures_inline,
         };
 
         Ok(Self {
@@ -560,6 +595,48 @@ mod test {
                 package: "libx11-6".into(),
                 version_constraint: None,
                 architectures: None,
+            }
+        );
+        let dl = DependencyList::parse("libc6:any, libx11-6:any")?;
+        assert_eq!(dl.dependencies.len(), 2);
+        assert_eq!(dl.dependencies[0].0.len(), 1);
+        assert_eq!(dl.dependencies[1].0.len(), 1);
+
+        assert_eq!(
+            dl.dependencies[0].0[0],
+            SingleDependency {
+                package: "libc6".into(),
+                version_constraint: None,
+                architectures: Some((false, vec!["any".into()])),
+            }
+        );
+        assert_eq!(
+            dl.dependencies[1].0[0],
+            SingleDependency {
+                package: "libx11-6".into(),
+                version_constraint: None,
+                architectures: Some((false, vec!["any".into()])),
+            }
+        );
+        let dl = DependencyList::parse("libc6:amd64, libx11-6:any")?;
+        assert_eq!(dl.dependencies.len(), 2);
+        assert_eq!(dl.dependencies[0].0.len(), 1);
+        assert_eq!(dl.dependencies[1].0.len(), 1);
+
+        assert_eq!(
+            dl.dependencies[0].0[0],
+            SingleDependency {
+                package: "libc6".into(),
+                version_constraint: None,
+                architectures: Some((false, vec!["amd64".into()])),
+            }
+        );
+        assert_eq!(
+            dl.dependencies[1].0[0],
+            SingleDependency {
+                package: "libx11-6".into(),
+                version_constraint: None,
+                architectures: Some((false, vec!["any".into()])),
             }
         );
 
