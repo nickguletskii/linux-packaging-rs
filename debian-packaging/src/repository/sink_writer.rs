@@ -7,7 +7,6 @@
 use {
     crate::{
         error::{DebianError, Result},
-        io::ContentDigest,
         repository::{
             RepositoryPathVerification, RepositoryPathVerificationState, RepositoryWrite,
             RepositoryWriter,
@@ -17,6 +16,7 @@ use {
     futures::AsyncRead,
     std::{borrow::Cow, pin::Pin, str::FromStr},
 };
+use crate::checksum::{AnyContentDigest, DebContentDigest};
 
 /// How [RepositoryWriter::verify_path()] should behave for [SinkWriter] instances.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,7 +81,7 @@ impl RepositoryWriter for SinkWriter {
     async fn verify_path<'path>(
         &self,
         path: &'path str,
-        _expected_content: Option<(u64, ContentDigest)>,
+        _expected_content: Option<(u64, AnyContentDigest)>,
     ) -> Result<RepositoryPathVerification<'path>> {
         Ok(RepositoryPathVerification {
             path,

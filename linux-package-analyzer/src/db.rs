@@ -1085,7 +1085,7 @@ mod test {
                 path: libc_path.clone(),
                 size: libc.size().expect("Size should be defined")?,
                 digest: libc
-                    .deb_digest(debian_packaging::repository::release::ChecksumType::Sha256)?,
+                    .deb_digest(debian_packaging::checksum::DebChecksumType::Sha256)?,
             })
             .await?;
 

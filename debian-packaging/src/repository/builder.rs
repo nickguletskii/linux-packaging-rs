@@ -18,9 +18,9 @@ use {
         control::{ControlField, ControlParagraph},
         deb::reader::resolve_control_file,
         error::{DebianError, Result},
-        io::{read_compressed, ContentDigest, DataResolver, MultiContentDigest, MultiDigester},
+        io::{read_compressed, DataResolver, MultiContentDigest, MultiDigester},
         repository::{
-            release::{ChecksumType, ReleaseFile, DATE_FORMAT},
+            release::{ReleaseFile, DATE_FORMAT},
             Compression, PublishEvent, RepositoryPathVerificationState, RepositoryWriter,
         },
     },
@@ -34,6 +34,7 @@ use {
         pin::Pin,
     },
 };
+use crate::checksum::{DebChecksumType, DebContentDigest};
 
 /// Pre-defined progress callback that is empty.
 pub const NO_PROGRESS_CB: Option<fn(PublishEvent)> = None;
@@ -96,7 +97,7 @@ pub trait DebPackageReference<'cf> {
     /// Obtains the binary digest of this file given a checksum flavor.
     ///
     /// Implementations can compute the digest at run-time or return a cached value.
-    fn deb_digest(&self, checksum: ChecksumType) -> Result<ContentDigest>;
+    fn deb_digest(&self, checksum: DebChecksumType) -> Result<DebContentDigest>;
 
     /// Obtain the filename of this `.deb`.
     ///
@@ -130,15 +131,15 @@ impl<'cf> DebPackageReference<'cf> for InMemoryDebFile {
         Ok(self.data.len() as u64)
     }
 
-    fn deb_digest(&self, checksum: ChecksumType) -> Result<ContentDigest> {
+    fn deb_digest(&self, checksum: DebChecksumType) -> Result<DebContentDigest> {
         let mut h = checksum.new_hasher();
         h.update(&self.data);
         let digest = h.finish().to_vec();
 
         Ok(match checksum {
-            ChecksumType::Md5 => ContentDigest::Md5(digest),
-            ChecksumType::Sha1 => ContentDigest::Sha1(digest),
-            ChecksumType::Sha256 => ContentDigest::Sha256(digest),
+            DebChecksumType::Md5 => DebContentDigest::Md5(digest),
+            DebChecksumType::Sha1 => DebContentDigest::Sha1(digest),
+            DebChecksumType::Sha256 => DebContentDigest::Sha256(digest),
         })
     }
 
@@ -174,8 +175,8 @@ impl<'a> IndexFileReader<'a> {
         )
     }
 
-    /// Obtain the `by-hash` path given a [ContentDigest].
-    pub fn by_hash_path(&self, digest: &ContentDigest) -> String {
+    /// Obtain the `by-hash` path given a [DebContentDigest].
+    pub fn by_hash_path(&self, digest: &DebContentDigest) -> String {
         format!(
             "{}/by-hash/{}/{}",
             self.directory,
@@ -200,7 +201,7 @@ pub struct BinaryPackagePoolArtifact<'a> {
     /// The expected size of the file.
     pub size: u64,
     /// The expected digest of the file.
-    pub digest: ContentDigest,
+    pub digest: DebContentDigest,
 }
 
 // (Package, Version) -> paragraph.
@@ -279,7 +280,7 @@ pub struct RepositoryBuilder<'cf> {
     label: Option<String>,
     version: Option<String>,
     acquire_by_hash: Option<bool>,
-    checksums: BTreeSet<ChecksumType>,
+    checksums: BTreeSet<DebChecksumType>,
     pool_layout: PoolLayout,
     index_file_compressions: BTreeSet<Compression>,
     binary_packages: ComponentBinaryPackages<'cf>,
@@ -306,7 +307,7 @@ impl<'cf> RepositoryBuilder<'cf> {
             label: None,
             version: None,
             acquire_by_hash: Some(true),
-            checksums: BTreeSet::from_iter([ChecksumType::Md5, ChecksumType::Sha256]),
+            checksums: BTreeSet::from_iter([DebChecksumType::Md5, DebChecksumType::Sha256]),
             pool_layout: PoolLayout::default(),
             index_file_compressions: BTreeSet::from_iter([
                 Compression::None,
@@ -360,9 +361,9 @@ impl<'cf> RepositoryBuilder<'cf> {
 
     /// Register a checksum type to emit.
     ///
-    /// [ChecksumType::Sha256] should always be used. Adding [ChecksumType::Md5] is
+    /// [DebChecksumType::Sha256] should always be used. Adding [DebChecksumType::Md5] is
     /// recommended for compatibility with old clients.
-    pub fn add_checksum(&mut self, value: ChecksumType) {
+    pub fn add_checksum(&mut self, value: DebChecksumType) {
         self.checksums.insert(value);
     }
 
@@ -508,7 +509,7 @@ impl<'cf> RepositoryBuilder<'cf> {
             let description = description.value_str();
 
             if let Some(index) = description.find('\n') {
-                let mut h = ChecksumType::Md5.new_hasher();
+                let mut h = DebChecksumType::Md5.new_hasher();
                 h.update(description.as_bytes());
                 h.update(b"\n");
                 let digest = h.finish();
@@ -611,7 +612,7 @@ impl<'cf> RepositoryBuilder<'cf> {
                 let digest_hex = para
                     .field_str(strongest_checksum.field_name())
                     .expect("checksum's field should have been set");
-                let digest = ContentDigest::from_hex_digest(*strongest_checksum, digest_hex)?;
+                let digest = DebContentDigest::from_hex_digest(*strongest_checksum, digest_hex)?;
 
                 Ok(BinaryPackagePoolArtifact { path, size, digest })
             })
@@ -717,7 +718,7 @@ impl<'cf> RepositoryBuilder<'cf> {
         let mut fs = futures::stream::iter(
             artifacts
                 .iter()
-                .map(|a| writer.verify_path(a.path, Some((a.size, a.digest.clone())))),
+                .map(|a| writer.verify_path(a.path, Some((a.size, a.digest.clone().into())))),
         )
         .buffer_unordered(threads);
 
@@ -1121,7 +1122,7 @@ async fn get_path_and_copy<'a, 'b>(
     // explicitly here. However, the API contract is a contract. Let's let
     // implementations shoot themselves in the foot.
     let reader = resolver
-        .get_path_with_digest_verification(artifact.path, artifact.size, artifact.digest.clone())
+        .get_path_with_digest_verification(artifact.path, artifact.size, artifact.digest.clone().into())
         .await?;
 
     writer.write_path(artifact.path.into(), reader).await?;
@@ -1147,6 +1148,7 @@ mod test {
         futures::AsyncReadExt,
         std::borrow::Cow,
     };
+    use crate::checksum::AnyContentDigest;
 
     const BULLSEYE_URL: &str = "http://snapshot.debian.org/archive/debian/20211120T085721Z";
 
@@ -1166,7 +1168,7 @@ mod test {
         async fn verify_path<'path>(
             &self,
             path: &'path str,
-            _expected_content: Option<(u64, ContentDigest)>,
+            _expected_content: Option<(u64, AnyContentDigest)>,
         ) -> Result<RepositoryPathVerification<'path>> {
             Ok(RepositoryPathVerification {
                 path,

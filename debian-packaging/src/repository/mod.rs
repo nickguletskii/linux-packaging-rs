@@ -65,6 +65,7 @@ The [builder] module contains functionality for creating/publishing
 repositories.
 */
 
+use crate::checksum::{AnyChecksumType, AnyContentDigest, DebChecksumType, DebContentDigest};
 use std::fmt::Formatter;
 use {
     crate::{
@@ -75,12 +76,12 @@ use {
         debian_source_control::{DebianSourceControlFile, DebianSourceControlFileFetch},
         debian_source_package_list::DebianSourcePackageList,
         error::{DebianError, Result},
-        io::{drain_reader, Compression, ContentDigest, DataResolver},
+        io::{drain_reader, Compression, DataResolver},
         repository::{
             contents::{ContentsFile, ContentsFileAsyncReader},
             release::{
-                ChecksumType, ClassifiedReleaseFileEntry, ContentsFileEntry, PackagesFileEntry,
-                ReleaseFile, SourcesFileEntry,
+                ClassifiedReleaseFileEntry, ContentsFileEntry, PackagesFileEntry, ReleaseFile,
+                SourcesFileEntry,
             },
         },
     },
@@ -113,7 +114,7 @@ pub struct BinaryPackageFetch<'a> {
     /// The expected size of the retrieved file.
     pub size: u64,
     /// The expected content digest of the retrieved file.
-    pub digest: ContentDigest,
+    pub digest: DebContentDigest,
 }
 
 /// Describes how to fetch a source package from a repository.
@@ -222,7 +223,7 @@ pub trait RepositoryRootReader: DataResolver + Sync {
         &self,
         fetch: BinaryPackageFetch<'fetch>,
     ) -> Result<Pin<Box<dyn AsyncRead + Send>>> {
-        self.get_path_with_digest_verification(&fetch.path, fetch.size, fetch.digest)
+        self.get_path_with_digest_verification(&fetch.path, fetch.size, fetch.digest.into())
             .await
     }
 
@@ -251,7 +252,7 @@ pub trait RepositoryRootReader: DataResolver + Sync {
         &self,
         fetch: SourcePackageFetch<'fetch>,
     ) -> Result<Pin<Box<dyn AsyncRead + Send>>> {
-        self.get_path_with_digest_verification(&fetch.path, fetch.size, fetch.digest.clone())
+        self.get_path_with_digest_verification(&fetch.path, fetch.size, fetch.digest.clone().into())
             .await
     }
 }
@@ -276,10 +277,10 @@ pub trait ReleaseReader: DataResolver + Sync {
     ///
     /// By default, this will prefer the strongest known checksum advertised in the
     /// release file.
-    fn retrieve_checksum(&self) -> Result<ChecksumType> {
+    fn retrieve_checksum(&self) -> Result<DebChecksumType> {
         let release = self.release_file();
 
-        let checksum = &[ChecksumType::Sha256, ChecksumType::Sha1, ChecksumType::Md5]
+        let checksum = &[DebChecksumType::Sha256, DebChecksumType::Sha1, DebChecksumType::Md5]
             .iter()
             .find(|variant| release.field(variant.field_name()).is_some())
             .ok_or(DebianError::RepositoryReadReleaseNoKnownChecksum)?;
@@ -300,7 +301,7 @@ pub trait ReleaseReader: DataResolver + Sync {
     /// Obtain [ClassifiedReleaseFileEntry] within the parsed `Release` file.
     fn classified_indices_entries(&self) -> Result<Vec<ClassifiedReleaseFileEntry<'_>>> {
         self.release_file()
-            .iter_classified_index_files(self.retrieve_checksum()?)
+            .iter_classified_index_files(self.retrieve_checksum()?.into())
             .ok_or(DebianError::ReleaseNoIndicesFiles)?
             .collect::<Result<Vec<_>>>()
     }
@@ -316,7 +317,7 @@ pub trait ReleaseReader: DataResolver + Sync {
         Ok(
             if let Some(entries) = self
                 .release_file()
-                .iter_packages_indices(self.retrieve_checksum()?)
+                .iter_packages_indices(self.retrieve_checksum()?.into())
             {
                 entries.collect::<Result<Vec<_>>>()?
             } else {
@@ -377,7 +378,7 @@ pub trait ReleaseReader: DataResolver + Sync {
         Ok(
             if let Some(entries) = self
                 .release_file()
-                .iter_contents_indices(self.retrieve_checksum()?)
+                .iter_contents_indices(self.retrieve_checksum()?.into())
             {
                 entries.collect::<Result<Vec<_>>>()?
             } else {
@@ -396,7 +397,7 @@ pub trait ReleaseReader: DataResolver + Sync {
         Ok(
             if let Some(entries) = self
                 .release_file()
-                .iter_sources_indices(self.retrieve_checksum()?)
+                .iter_sources_indices(self.retrieve_checksum()?.into())
             {
                 entries.collect::<Result<Vec<_>>>()?
             } else {
@@ -446,7 +447,7 @@ pub trait ReleaseReader: DataResolver + Sync {
     /// Resolve a reference to a `Packages` file to fetch given search criteria.
     ///
     /// This will find all entries defining the desired `Packages` file. It will filter
-    /// through the [ChecksumType] as defined by [Self::retrieve_checksum()] and will prioritize
+    /// through the [DebChecksumType] as defined by [Self::retrieve_checksum()] and will prioritize
     /// the compression format according to [Self::preferred_compression()].
     fn packages_entry(
         &self,
@@ -554,10 +555,10 @@ pub trait ReleaseReader: DataResolver + Sync {
                         DebianError::ControlRequiredFieldMissing("Size".to_string())
                     })??;
 
-                    let digest = ChecksumType::preferred_order()
+                    let digest = DebChecksumType::preferred_order()
                         .find_map(|checksum| {
                             cf.field_str(checksum.field_name()).map(|hex_digest| {
-                                ContentDigest::from_hex_digest(checksum, hex_digest)
+                                DebContentDigest::from_hex_digest(checksum, hex_digest)
                             })
                         })
                         .ok_or(DebianError::RepositoryReadCouldNotDeterminePackageDigest)??;
@@ -625,7 +626,10 @@ pub trait ReleaseReader: DataResolver + Sync {
     ///
     /// This will call [Self::sources_entry] to resolve the [SourcesFileEntry] for the given
     /// `component` then will call [Self::resolve_sources_from_entry] to fetch and parse it.
-    async fn resolve_sources(&self, component: Option<&str>) -> Result<DebianSourcePackageList<'static>> {
+    async fn resolve_sources(
+        &self,
+        component: Option<&str>,
+    ) -> Result<DebianSourcePackageList<'static>> {
         let entry = self.sources_entry(component)?;
 
         self.resolve_sources_from_entry(&entry).await
@@ -997,7 +1001,7 @@ pub trait RepositoryWriter: Sync {
     async fn verify_path<'path>(
         &self,
         path: &'path str,
-        expected_content: Option<(u64, ContentDigest)>,
+        expected_content: Option<(u64, AnyContentDigest)>,
     ) -> Result<RepositoryPathVerification<'path>>;
 
     /// Write data to a given path.
@@ -1024,7 +1028,7 @@ pub trait RepositoryWriter: Sync {
         &self,
         reader: &dyn RepositoryRootReader,
         source_path: Cow<'path, str>,
-        expected_content: Option<(u64, ContentDigest)>,
+        expected_content: Option<(u64, AnyContentDigest)>,
         dest_path: Cow<'path, str>,
         progress_cb: &Option<Box<dyn Fn(PublishEvent) + Sync>>,
     ) -> Result<RepositoryWriteOperation<'path>> {
@@ -1035,7 +1039,7 @@ pub trait RepositoryWriter: Sync {
         }
 
         let verification = self
-            .verify_path(dest_path.as_ref(), expected_content.clone())
+            .verify_path(dest_path.as_ref(), expected_content.clone().into())
             .await?;
 
         if matches!(

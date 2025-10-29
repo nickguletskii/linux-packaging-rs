@@ -4,10 +4,11 @@
 
 /*! Filesystem based Debian repositories. */
 
+use crate::checksum::{AnyContentDigest, DebContentDigest};
 use {
     crate::{
         error::{DebianError, Result},
-        io::{Compression, ContentDigest, DataResolver, DigestingReader},
+        io::{Compression, DataResolver, DigestingReader},
         repository::{
             release::ReleaseFile, ReleaseReader, RepositoryPathVerification,
             RepositoryPathVerificationState, RepositoryRootReader, RepositoryWrite,
@@ -150,7 +151,7 @@ impl RepositoryWriter for FilesystemRepositoryWriter {
     async fn verify_path<'path>(
         &self,
         path: &'path str,
-        expected_content: Option<(u64, ContentDigest)>,
+        expected_content: Option<(u64, AnyContentDigest)>,
     ) -> Result<RepositoryPathVerification<'path>> {
         let dest_path = self.root_dir.join(path);
 
@@ -173,6 +174,14 @@ impl RepositoryWriter for FilesystemRepositoryWriter {
                         state: RepositoryPathVerificationState::ExistsIntegrityMismatch,
                     })
                 } else {
+                    let Ok(expected_digest) =
+                        crate::checksum::DebContentDigest::try_from(expected_digest)
+                    else {
+                        return Ok(RepositoryPathVerification {
+                            path,
+                            state: RepositoryPathVerificationState::ExistsIntegrityMismatch,
+                        });
+                    };
                     let f = async_std::fs::File::open(&dest_path)
                         .await
                         .map_err(|e| DebianError::RepositoryIoPath(path.to_string(), e))?;

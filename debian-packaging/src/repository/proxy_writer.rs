@@ -7,7 +7,6 @@
 use {
     crate::{
         error::{DebianError, Result},
-        io::ContentDigest,
         repository::{
             RepositoryPathVerification, RepositoryPathVerificationState, RepositoryWrite,
             RepositoryWriter,
@@ -17,6 +16,7 @@ use {
     futures::AsyncRead,
     std::{borrow::Cow, pin::Pin, sync::Mutex},
 };
+use crate::checksum::{AnyContentDigest, DebContentDigest};
 
 /// How [RepositoryWriter::verify_path()] should behave for [ProxyWriter] instances.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,7 +69,7 @@ impl<W: RepositoryWriter + Send> RepositoryWriter for ProxyWriter<W> {
     async fn verify_path<'path>(
         &self,
         path: &'path str,
-        expected_content: Option<(u64, ContentDigest)>,
+        expected_content: Option<(u64, AnyContentDigest)>,
     ) -> Result<RepositoryPathVerification<'path>> {
         match self.verify_behavior {
             ProxyVerifyBehavior::Proxy => self.inner.verify_path(path, expected_content).await,

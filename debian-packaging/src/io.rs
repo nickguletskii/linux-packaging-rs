@@ -4,11 +4,9 @@
 
 /*! I/O helpers. */
 
+use crate::checksum::{AnyContentDigest, DebChecksumType, DebContentDigest};
 use {
-    crate::{
-        error::{DebianError, Result},
-        repository::release::ChecksumType,
-    },
+    crate::error::Result,
     async_compression::futures::bufread::{
         BzDecoder, BzEncoder, GzipDecoder, GzipEncoder, LzmaDecoder, LzmaEncoder, XzDecoder,
         XzEncoder,
@@ -20,100 +18,10 @@ use {
     pin_project::pin_project,
     std::{
         collections::HashMap,
-        fmt::Formatter,
         pin::Pin,
         task::{Context, Poll},
     },
 };
-
-/// Represents a content digest.
-#[derive(Clone, Eq, PartialEq, PartialOrd)]
-pub enum ContentDigest {
-    /// An MD5 digest.
-    Md5(Vec<u8>),
-    /// A SHA-1 digest.
-    Sha1(Vec<u8>),
-    /// A SHA-256 digest.
-    Sha256(Vec<u8>),
-}
-
-impl std::fmt::Debug for ContentDigest {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Md5(data) => write!(f, "Md5({})", hex::encode(data)),
-            Self::Sha1(data) => write!(f, "Sha1({})", hex::encode(data)),
-            Self::Sha256(data) => write!(f, "Sha256({})", hex::encode(data)),
-        }
-    }
-}
-
-impl ContentDigest {
-    /// Create a new MD5 instance by parsing a hex digest.
-    pub fn md5_hex(digest: &str) -> Result<Self> {
-        Self::from_hex_digest(ChecksumType::Md5, digest)
-    }
-
-    /// Create a new SHA-1 instance by parsing a hex digest.
-    pub fn sha1_hex(digest: &str) -> Result<Self> {
-        Self::from_hex_digest(ChecksumType::Sha1, digest)
-    }
-
-    /// Create a new SHA-256 instance by parsing a hex digest.
-    pub fn sha256_hex(digest: &str) -> Result<Self> {
-        Self::from_hex_digest(ChecksumType::Sha256, digest)
-    }
-
-    /// Obtain an instance by parsing a hex string as a [ChecksumType].
-    pub fn from_hex_digest(checksum: ChecksumType, digest: &str) -> Result<Self> {
-        let digest = hex::decode(digest)
-            .map_err(|e| DebianError::ContentDigestBadHex(digest.to_string(), e))?;
-
-        Ok(match checksum {
-            ChecksumType::Md5 => Self::Md5(digest),
-            ChecksumType::Sha1 => Self::Sha1(digest),
-            ChecksumType::Sha256 => Self::Sha256(digest),
-        })
-    }
-
-    /// Create a new hasher matching for the type of this digest.
-    pub fn new_hasher(&self) -> Box<dyn Hasher + Send> {
-        Box::new(match self {
-            Self::Md5(_) => CleartextHasher::md5(),
-            Self::Sha1(_) => CleartextHasher::sha1(),
-            Self::Sha256(_) => CleartextHasher::sha256(),
-        })
-    }
-
-    /// Obtain the digest bytes for this content digest.
-    pub fn digest_bytes(&self) -> &[u8] {
-        match self {
-            Self::Md5(x) => x,
-            Self::Sha1(x) => x,
-            Self::Sha256(x) => x,
-        }
-    }
-
-    /// Obtain the hex encoded content digest.
-    pub fn digest_hex(&self) -> String {
-        hex::encode(self.digest_bytes())
-    }
-
-    /// Obtain the [ChecksumType] for this digest.
-    pub fn checksum_type(&self) -> ChecksumType {
-        match self {
-            Self::Md5(_) => ChecksumType::Md5,
-            Self::Sha1(_) => ChecksumType::Sha1,
-            Self::Sha256(_) => ChecksumType::Sha256,
-        }
-    }
-
-    /// Obtain the name of the field in `[In]Release` files that holds this digest type.
-    ///
-    /// This also corresponds to the directory name for `by-hash` paths.
-    pub fn release_field_name(&self) -> &'static str {
-        self.checksum_type().field_name()
-    }
-}
 
 /// Compression format used by Debian primitives.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -197,7 +105,7 @@ pub async fn drain_reader(reader: impl AsyncRead) -> std::io::Result<u64> {
 pub struct ContentValidatingReader<R> {
     hasher: Option<Box<dyn pgp::crypto::hash::Hasher + Send>>,
     expected_size: u64,
-    expected_digest: ContentDigest,
+    expected_digest: AnyContentDigest,
     #[pin]
     source: R,
     bytes_read: u64,
@@ -205,7 +113,7 @@ pub struct ContentValidatingReader<R> {
 
 impl<R> ContentValidatingReader<R> {
     /// Create a new instance bound to a source and having expected size and content digest.
-    pub fn new(source: R, expected_size: u64, expected_digest: ContentDigest) -> Self {
+    pub fn new(source: R, expected_size: u64, expected_digest: AnyContentDigest) -> Self {
         Self {
             hasher: Some(expected_digest.new_hasher()),
             expected_size,
@@ -278,32 +186,32 @@ where
 /// Holds multiple flavors of content digests.
 #[derive(Clone, Debug)]
 pub struct MultiContentDigest {
-    pub md5: ContentDigest,
-    pub sha1: ContentDigest,
-    pub sha256: ContentDigest,
+    pub md5: DebContentDigest,
+    pub sha1: DebContentDigest,
+    pub sha256: DebContentDigest,
 }
 
 impl MultiContentDigest {
     /// Whether this digest matches another one.
-    pub fn matches_digest(&self, other: &ContentDigest) -> bool {
+    pub fn matches_digest(&self, other: &DebContentDigest) -> bool {
         match other {
-            ContentDigest::Md5(_) => &self.md5 == other,
-            ContentDigest::Sha1(_) => &self.sha1 == other,
-            ContentDigest::Sha256(_) => &self.sha256 == other,
+            DebContentDigest::Md5(_) => &self.md5 == other,
+            DebContentDigest::Sha1(_) => &self.sha1 == other,
+            DebContentDigest::Sha256(_) => &self.sha256 == other,
         }
     }
 
-    /// Obtain the [ContentDigest] for a given [ChecksumType].
-    pub fn digest_from_checksum(&self, checksum: ChecksumType) -> &ContentDigest {
+    /// Obtain the [DebContentDigest] for a given [DebChecksumType].
+    pub fn digest_from_checksum(&self, checksum: DebChecksumType) -> &DebContentDigest {
         match checksum {
-            ChecksumType::Md5 => &self.md5,
-            ChecksumType::Sha1 => &self.sha1,
-            ChecksumType::Sha256 => &self.sha256,
+            DebChecksumType::Md5 => &self.md5,
+            DebChecksumType::Sha1 => &self.sha1,
+            DebChecksumType::Sha256 => &self.sha256,
         }
     }
 
-    /// Obtain an iterator of [ContentDigest] in this instance.
-    pub fn iter_digests(&self) -> impl Iterator<Item = &ContentDigest> + '_ {
+    /// Obtain an iterator of [DebContentDigest] in this instance.
+    pub fn iter_digests(&self) -> impl Iterator<Item = &DebContentDigest> + '_ {
         [&self.md5, &self.sha1, &self.sha256].into_iter()
     }
 }
@@ -338,14 +246,14 @@ impl MultiDigester {
     /// Consumes the instance and returns a [MultiContentDigest] holding all the digests.
     pub fn finish(self) -> MultiContentDigest {
         MultiContentDigest {
-            md5: ContentDigest::Md5(self.md5.finish()),
-            sha1: ContentDigest::Sha1(self.sha1.finish()),
-            sha256: ContentDigest::Sha256(self.sha256.finish()),
+            md5: DebContentDigest::Md5(self.md5.finish()),
+            sha1: DebContentDigest::Sha1(self.sha1.finish()),
+            sha256: DebContentDigest::Sha256(self.sha256.finish()),
         }
     }
 }
 
-/// An [AsyncRead] stream adapter that computes multiple [ContentDigest] as data is read.
+/// An [AsyncRead] stream adapter that computes multiple [DebContentDigest] as data is read.
 #[pin_project]
 pub struct DigestingReader<R> {
     digester: MultiDigester,
@@ -394,7 +302,7 @@ where
     }
 }
 
-/// An [AsyncWrite] stream adapter that computes multiple [ContentDigest] as data is written.
+/// An [AsyncWrite] stream adapter that computes multiple [DebContentDigest] as data is written.
 #[pin_project]
 pub struct DigestingWriter<W> {
     digester: MultiDigester,
@@ -479,7 +387,7 @@ pub trait DataResolver: Sync {
         &self,
         path: &str,
         expected_size: u64,
-        expected_digest: ContentDigest,
+        expected_digest: AnyContentDigest,
     ) -> Result<Pin<Box<dyn AsyncRead + Send>>> {
         Ok(Box::pin(ContentValidatingReader::new(
             self.get_path(path).await?,
@@ -509,7 +417,7 @@ pub trait DataResolver: Sync {
         path: &str,
         compression: Compression,
         expected_size: u64,
-        expected_digest: ContentDigest,
+        expected_digest: AnyContentDigest,
     ) -> Result<Pin<Box<dyn AsyncRead + Send>>> {
         let reader = self
             .get_path_with_digest_verification(path, expected_size, expected_digest)

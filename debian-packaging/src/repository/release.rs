@@ -28,11 +28,10 @@ use {
     crate::{
         control::{ControlParagraph, ControlParagraphReader},
         error::{DebianError, Result},
-        io::ContentDigest,
         repository::Compression,
     },
-    chrono::{DateTime, Utc},
-    pgp_cleartext::CleartextHasher,
+    chrono::{DateTime, Utc}
+    ,
     std::{
         borrow::Cow,
         io::BufRead,
@@ -40,47 +39,12 @@ use {
         str::FromStr,
     },
 };
+use crate::checksum::{DebChecksumType, AnyContentDigest};
+use crate::checksum::AnyChecksumType;
 
 /// Formatter string for dates in release files.
 pub const DATE_FORMAT: &str = "%a, %d %b %Y %H:%M:%S %z";
 
-/// Checksum type / digest mechanism used in a release file.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ChecksumType {
-    /// MD5.
-    Md5,
-
-    /// SHA-1.
-    Sha1,
-
-    /// SHA-256.
-    Sha256,
-}
-
-impl ChecksumType {
-    /// Emit variants in their preferred usage order.
-    pub fn preferred_order() -> impl Iterator<Item = ChecksumType> {
-        [Self::Sha256, Self::Sha1, Self::Md5].into_iter()
-    }
-
-    /// Name of the control field in `Release` files holding this variant type.
-    pub fn field_name(&self) -> &'static str {
-        match self {
-            Self::Md5 => "MD5Sum",
-            Self::Sha1 => "SHA1",
-            Self::Sha256 => "SHA256",
-        }
-    }
-
-    /// Obtain a new hasher for this checksum flavor.
-    pub fn new_hasher(&self) -> Box<dyn pgp::crypto::hash::Hasher + Send> {
-        Box::new(match self {
-            Self::Md5 => CleartextHasher::md5(),
-            Self::Sha1 => CleartextHasher::sha1(),
-            Self::Sha256 => CleartextHasher::sha256(),
-        })
-    }
-}
 
 /// An entry for a file in a parsed `Release` file.
 ///
@@ -97,7 +61,7 @@ pub struct ReleaseFileEntry<'a> {
     pub path: &'a str,
 
     /// The content digest of this file.
-    pub digest: ContentDigest,
+    pub digest: AnyContentDigest,
 
     /// The size of the file in bytes.
     pub size: u64,
@@ -805,7 +769,7 @@ pub struct FileManifestEntry<'a> {
     entry: ReleaseFileEntry<'a>,
 
     /// The digest format stored in this file.
-    pub checksum: ChecksumType,
+    pub checksum: DebChecksumType,
 
     /// The root path for files in this manifest.
     pub root_path: Cow<'a, str>,
@@ -842,8 +806,8 @@ impl<'a> TryFrom<ReleaseFileEntry<'a>> for FileManifestEntry<'a> {
             .ok_or(DebianError::ReleaseIndicesEntryWrongType)?;
 
         let checksum = match filename {
-            "MD5SUMS" => ChecksumType::Md5,
-            "SHA256SUMS" => ChecksumType::Sha256,
+            "MD5SUMS" => DebChecksumType::Md5,
+            "SHA256SUMS" => DebChecksumType::Sha256,
             _ => {
                 return Err(DebianError::ReleaseIndicesEntryWrongType);
             }
@@ -1120,7 +1084,7 @@ impl<'a> ReleaseFile<'a> {
     /// parsed as they are consumed from the iterator. Parse errors result in an [Err].
     pub fn iter_index_files(
         &self,
-        checksum: ChecksumType,
+        checksum: AnyChecksumType,
     ) -> Option<Box<(dyn Iterator<Item = Result<ReleaseFileEntry<'_>>> + '_)>> {
         if let Some(iter) = self.iter_field_lines(checksum.field_name()) {
             Some(Box::new(iter.map(move |v| {
@@ -1137,7 +1101,7 @@ impl<'a> ReleaseFile<'a> {
                     return Err(DebianError::ReleasePathWithSpaces(v.to_string()));
                 }
 
-                let digest = ContentDigest::from_hex_digest(checksum, digest)?;
+                let digest = AnyContentDigest::from_hex_digest(checksum, digest)?;
                 let size = u64::from_str(size)?;
 
                 Ok(ReleaseFileEntry { path, digest, size })
@@ -1157,7 +1121,7 @@ impl<'a> ReleaseFile<'a> {
     /// [Err] will be emitted instead of [ClassifiedReleaseFileEntry::Other].
     pub fn iter_classified_index_files(
         &self,
-        checksum: ChecksumType,
+        checksum: AnyChecksumType,
     ) -> Option<Box<(dyn Iterator<Item = Result<ClassifiedReleaseFileEntry<'_>>> + '_)>> {
         if let Some(iter) = self.iter_index_files(checksum) {
             Some(Box::new(iter.map(|entry| match entry {
@@ -1263,7 +1227,7 @@ impl<'a> ReleaseFile<'a> {
     /// and architectures defined by this file.
     pub fn iter_contents_indices(
         &self,
-        checksum: ChecksumType,
+        checksum: AnyChecksumType,
     ) -> Option<Box<(dyn Iterator<Item = Result<ContentsFileEntry<'_>>> + '_)>> {
         if let Some(iter) = self.iter_index_files(checksum) {
             Some(Box::new(iter.filter_map(|entry| match entry {
@@ -1288,7 +1252,7 @@ impl<'a> ReleaseFile<'a> {
     /// and architectures defined by this file.
     pub fn iter_packages_indices(
         &self,
-        checksum: ChecksumType,
+        checksum: AnyChecksumType,
     ) -> Option<Box<(dyn Iterator<Item = Result<PackagesFileEntry<'_>>> + '_)>> {
         if let Some(iter) = self.iter_index_files(checksum) {
             Some(Box::new(iter.filter_map(|entry| match entry {
@@ -1307,7 +1271,7 @@ impl<'a> ReleaseFile<'a> {
     /// Find a [PackagesFileEntry] given search constraints.
     pub fn find_packages_indices(
         &self,
-        checksum: ChecksumType,
+        checksum: AnyChecksumType,
         compression: Compression,
         component: Option<&str>,
         arch: &str,
@@ -1339,7 +1303,7 @@ impl<'a> ReleaseFile<'a> {
     /// This essentially looks for `Sources*` files in the file lists.
     pub fn iter_sources_indices(
         &self,
-        checksum: ChecksumType,
+        checksum: AnyChecksumType,
     ) -> Option<Box<(dyn Iterator<Item = Result<SourcesFileEntry<'_>>> + '_)>> {
         if let Some(iter) = self.iter_index_files(checksum) {
             Some(Box::new(iter.filter_map(|entry| match entry {
@@ -1358,7 +1322,7 @@ impl<'a> ReleaseFile<'a> {
     /// Find a [SourcesFileEntry] given search constraints.
     pub fn find_sources_indices(
         &self,
-        checksum: ChecksumType,
+        checksum: AnyChecksumType,
         compression: Compression,
         component: Option<&str>,
     ) -> Option<SourcesFileEntry<'_>> {
@@ -1426,7 +1390,7 @@ mod test {
         assert!(release.valid_until_str().is_none());
 
         let entries = release
-            .iter_index_files(ChecksumType::Md5)
+            .iter_index_files(AnyChecksumType::Md5)
             .unwrap()
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 600);
@@ -1434,7 +1398,7 @@ mod test {
             entries[0],
             ReleaseFileEntry {
                 path: "contrib/Contents-all",
-                digest: ContentDigest::md5_hex("7fdf4db15250af5368cc52a91e8edbce").unwrap(),
+                digest: AnyContentDigest::md5_hex("7fdf4db15250af5368cc52a91e8edbce").unwrap(),
                 size: 738242,
             }
         );
@@ -1446,7 +1410,7 @@ mod test {
             entries[1],
             ReleaseFileEntry {
                 path: "contrib/Contents-all.gz",
-                digest: ContentDigest::md5_hex("cbd7bc4d3eb517ac2b22f929dfc07b47").unwrap(),
+                digest: AnyContentDigest::md5_hex("cbd7bc4d3eb517ac2b22f929dfc07b47").unwrap(),
                 size: 57319,
             }
         );
@@ -1458,7 +1422,7 @@ mod test {
             entries[599],
             ReleaseFileEntry {
                 path: "non-free/source/Sources.xz",
-                digest: ContentDigest::md5_hex("e3830f6fc5a946b5a5b46e8277e1d86f").unwrap(),
+                digest: AnyContentDigest::md5_hex("e3830f6fc5a946b5a5b46e8277e1d86f").unwrap(),
                 size: 80488,
             }
         );
@@ -1467,10 +1431,10 @@ mod test {
             "non-free/source/by-hash/MD5Sum/e3830f6fc5a946b5a5b46e8277e1d86f"
         );
 
-        assert!(release.iter_index_files(ChecksumType::Sha1).is_none());
+        assert!(release.iter_index_files(AnyChecksumType::Sha1).is_none());
 
         let entries = release
-            .iter_index_files(ChecksumType::Sha256)
+            .iter_index_files(AnyChecksumType::Sha256)
             .unwrap()
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 600);
@@ -1478,7 +1442,7 @@ mod test {
             entries[0],
             ReleaseFileEntry {
                 path: "contrib/Contents-all",
-                digest: ContentDigest::sha256_hex(
+                digest: AnyContentDigest::sha256_hex(
                     "3957f28db16e3f28c7b34ae84f1c929c567de6970f3f1b95dac9b498dd80fe63"
                 )
                 .unwrap(),
@@ -1490,7 +1454,7 @@ mod test {
             entries[1],
             ReleaseFileEntry {
                 path: "contrib/Contents-all.gz",
-                digest: ContentDigest::sha256_hex(
+                digest: AnyContentDigest::sha256_hex(
                     "3e9a121d599b56c08bc8f144e4830807c77c29d7114316d6984ba54695d3db7b"
                 )
                 .unwrap(),
@@ -1501,7 +1465,7 @@ mod test {
         assert_eq!(
             entries[599],
             ReleaseFileEntry {
-                digest: ContentDigest::sha256_hex(
+                digest: AnyContentDigest::sha256_hex(
                     "30f3f996941badb983141e3b29b2ed5941d28cf81f9b5f600bb48f782d386fc7"
                 )
                 .unwrap(),
@@ -1532,7 +1496,7 @@ mod test {
         assert_eq!(EXPECTED_OTHER, 0);
 
         let entries = release
-            .iter_classified_index_files(ChecksumType::Sha256)
+            .iter_classified_index_files(AnyChecksumType::Sha256)
             .unwrap()
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 600);
@@ -1601,7 +1565,7 @@ mod test {
         );
 
         let contents = release
-            .iter_contents_indices(ChecksumType::Sha256)
+            .iter_contents_indices(AnyChecksumType::Sha256)
             .unwrap()
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(contents.len(), EXPECTED_CONTENTS);
@@ -1611,7 +1575,7 @@ mod test {
             ContentsFileEntry {
                 entry: ReleaseFileEntry {
                     path: "contrib/Contents-all",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "3957f28db16e3f28c7b34ae84f1c929c567de6970f3f1b95dac9b498dd80fe63"
                     )
                     .unwrap(),
@@ -1628,7 +1592,7 @@ mod test {
             ContentsFileEntry {
                 entry: ReleaseFileEntry {
                     path: "contrib/Contents-all.gz",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "3e9a121d599b56c08bc8f144e4830807c77c29d7114316d6984ba54695d3db7b"
                     )
                     .unwrap(),
@@ -1645,7 +1609,7 @@ mod test {
             ContentsFileEntry {
                 entry: ReleaseFileEntry {
                     path: "contrib/Contents-udeb-amd64",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     )
                     .unwrap(),
@@ -1659,7 +1623,7 @@ mod test {
         );
 
         let packages = release
-            .iter_packages_indices(ChecksumType::Sha256)
+            .iter_packages_indices(AnyChecksumType::Sha256)
             .unwrap()
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(packages.len(), EXPECTED_PACKAGES);
@@ -1669,7 +1633,7 @@ mod test {
             PackagesFileEntry {
                 entry: ReleaseFileEntry {
                     path: "contrib/binary-all/Packages",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "48cfe101cd84f16baf720b99e8f2ff89fd7e063553966d8536b472677acb82f0"
                     )
                     .unwrap(),
@@ -1686,7 +1650,7 @@ mod test {
             PackagesFileEntry {
                 entry: ReleaseFileEntry {
                     path: "contrib/binary-all/Packages.gz",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "86057fcd3eff667ec8e3fbabb2a75e229f5e99f39ace67ff0db4a8509d0707e4"
                     )
                     .unwrap(),
@@ -1703,7 +1667,7 @@ mod test {
             PackagesFileEntry {
                 entry: ReleaseFileEntry {
                     path: "contrib/binary-all/Packages.xz",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "706c840235798e098d4d6013d1dabbc967f894d0ffa02c92ac959dcea85ddf54"
                     )
                     .unwrap(),
@@ -1727,7 +1691,7 @@ mod test {
             PackagesFileEntry {
                 entry: ReleaseFileEntry {
                     path: "contrib/debian-installer/binary-all/Packages",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     )
                     .unwrap(),
@@ -1741,20 +1705,20 @@ mod test {
         );
 
         let sources = release
-            .iter_sources_indices(ChecksumType::Sha256)
+            .iter_sources_indices(AnyChecksumType::Sha256)
             .unwrap()
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(sources.len(), EXPECTED_SOURCES);
 
         let entry = release
-            .find_sources_indices(ChecksumType::Sha256, Compression::Xz, Some("main"))
+            .find_sources_indices(AnyChecksumType::Sha256, Compression::Xz, Some("main"))
             .unwrap();
         assert_eq!(
             entry,
             SourcesFileEntry {
                 entry: ReleaseFileEntry {
                     path: "main/source/Sources.xz",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "1801d18c1135168d5dd86a8cb85fb5cd5bd81e16174acc25d900dee11389e9cd"
                     )
                     .unwrap(),
@@ -1809,7 +1773,7 @@ mod test {
         let release = ReleaseFile::from_reader(&mut reader)?;
 
         let contents = release
-            .iter_contents_indices(ChecksumType::Sha256)
+            .iter_contents_indices(AnyChecksumType::Sha256)
             .unwrap()
             .collect::<Result<Vec<_>>>()?;
 
@@ -1820,7 +1784,7 @@ mod test {
             ContentsFileEntry {
                 entry: ReleaseFileEntry {
                     path: "Contents-riscv64",
-                    digest: ContentDigest::sha256_hex(
+                    digest: AnyContentDigest::sha256_hex(
                         "0f27d95c6df5c174622e8c42e2b2f1cad636af6296ae981e87a2a7d4cdd572db"
                     )
                     .unwrap(),

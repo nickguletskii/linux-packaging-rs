@@ -126,3 +126,4 @@ pub mod package_version;
 pub mod repository;
 pub mod signing_key;
 pub mod source_package_control;
+pub mod checksum;

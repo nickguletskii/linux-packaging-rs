@@ -9,9 +9,7 @@ use {
         control::{ControlParagraph, ControlParagraphReader},
         dependency::{DependencyList, PackageDependencyFields},
         error::{DebianError, Result},
-        io::ContentDigest,
         package_version::PackageVersion,
-        repository::release::ChecksumType,
     },
     std::{
         io::BufRead,
@@ -19,6 +17,7 @@ use {
         str::FromStr,
     },
 };
+use crate::checksum::{DebChecksumType, DebContentDigest};
 
 /// A single file as described by a `Files` or `Checksums-*` field in a [DebianSourceControlFile].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,7 +26,7 @@ pub struct DebianSourceControlFileEntry<'a> {
     pub filename: &'a str,
 
     /// The content digest of this file.
-    pub digest: ContentDigest,
+    pub digest: DebContentDigest,
 
     /// The size in bytes of the file.
     pub size: u64,
@@ -69,7 +68,7 @@ pub struct DebianSourceControlFileFetch {
     pub path: String,
 
     /// The digest of the file.
-    pub digest: ContentDigest,
+    pub digest: DebContentDigest,
 
     /// The size of the file in bytes.
     pub size: u64,
@@ -338,7 +337,7 @@ impl<'a> DebianSourceControlFile<'a> {
     pub fn checksums_sha1(
         &self,
     ) -> Option<Box<(dyn Iterator<Item = Result<DebianSourceControlFileEntry<'_>>> + '_)>> {
-        self.iter_files("Checksums-Sha1", ChecksumType::Sha1)
+        self.iter_files("Checksums-Sha1", DebChecksumType::Sha1)
     }
 
     /// List of associated files with SHA-256 checksums.
@@ -347,7 +346,7 @@ impl<'a> DebianSourceControlFile<'a> {
     pub fn checksums_sha256(
         &self,
     ) -> Option<Box<(dyn Iterator<Item = Result<DebianSourceControlFileEntry<'_>>> + '_)>> {
-        self.iter_files("Checksums-Sha256", ChecksumType::Sha256)
+        self.iter_files("Checksums-Sha256", DebChecksumType::Sha256)
     }
 
     /// List of associated files with MD5 checksums.
@@ -356,14 +355,14 @@ impl<'a> DebianSourceControlFile<'a> {
     pub fn files(
         &self,
     ) -> Result<Box<(dyn Iterator<Item = Result<DebianSourceControlFileEntry<'_>>> + '_)>> {
-        self.iter_files("Files", ChecksumType::Md5)
+        self.iter_files("Files", DebChecksumType::Md5)
             .ok_or_else(|| DebianError::ControlRequiredFieldMissing("Files".to_string()))
     }
 
     fn iter_files(
         &self,
         field: &str,
-        checksum: ChecksumType,
+        checksum: DebChecksumType,
     ) -> Option<Box<(dyn Iterator<Item = Result<DebianSourceControlFileEntry<'_>>> + '_)>> {
         if let Some(iter) = self.iter_field_lines(field) {
             Some(Box::new(iter.map(move |v| {
@@ -380,7 +379,7 @@ impl<'a> DebianSourceControlFile<'a> {
                     return Err(DebianError::ReleasePathWithSpaces(v.to_string()));
                 }
 
-                let digest = ContentDigest::from_hex_digest(checksum, digest)?;
+                let digest = DebContentDigest::from_hex_digest(checksum, digest)?;
                 let size = u64::from_str(size)?;
 
                 Ok(DebianSourceControlFileEntry {
@@ -400,14 +399,14 @@ impl<'a> DebianSourceControlFile<'a> {
     /// source package.
     pub fn file_fetches(
         &self,
-        checksum: ChecksumType,
+        checksum: DebChecksumType,
     ) -> Result<Box<(dyn Iterator<Item = Result<DebianSourceControlFileFetch>> + '_)>> {
         let entries = match checksum {
-            ChecksumType::Md5 => self.files()?,
-            ChecksumType::Sha1 => self.checksums_sha1().ok_or_else(|| {
+            DebChecksumType::Md5 => self.files()?,
+            DebChecksumType::Sha1 => self.checksums_sha1().ok_or_else(|| {
                 DebianError::ControlRequiredFieldMissing("Checksums-Sha1".to_string())
             })?,
-            ChecksumType::Sha256 => self.checksums_sha256().ok_or_else(|| {
+            DebChecksumType::Sha256 => self.checksums_sha256().ok_or_else(|| {
                 DebianError::ControlRequiredFieldMissing("Checksums-Sha256".to_string())
             })?,
         };
@@ -498,12 +497,12 @@ mod test {
             vec![
                 DebianSourceControlFileEntry {
                     filename: "libzstd_1.4.8+dfsg.orig.tar.xz",
-                    digest: ContentDigest::sha1_hex("a24e4ccf9fc356aeaaa0783316a26bd65817c354")?,
+                    digest: DebContentDigest::sha1_hex("a24e4ccf9fc356aeaaa0783316a26bd65817c354")?,
                     size: 1331996,
                 },
                 DebianSourceControlFileEntry {
                     filename: "libzstd_1.4.8+dfsg-3.debian.tar.xz",
-                    digest: ContentDigest::sha1_hex("896a47a2934d0fcf9faa8397d05a12b932697d1f")?,
+                    digest: DebContentDigest::sha1_hex("896a47a2934d0fcf9faa8397d05a12b932697d1f")?,
                     size: 12184,
                 }
             ]
@@ -513,14 +512,14 @@ mod test {
             vec![
                 DebianSourceControlFileEntry {
                     filename: "libzstd_1.4.8+dfsg.orig.tar.xz",
-                    digest: ContentDigest::sha256_hex(
+                    digest: DebContentDigest::sha256_hex(
                         "1e8ce5c4880a6d5bd8d3186e4186607dd19b64fc98a3877fc13aeefd566d67c5"
                     )?,
                     size: 1331996,
                 },
                 DebianSourceControlFileEntry {
                     filename: "libzstd_1.4.8+dfsg-3.debian.tar.xz",
-                    digest: ContentDigest::sha256_hex(
+                    digest: DebContentDigest::sha256_hex(
                         "fecd87a469d5a07b6deeeef53ed24b2f1a74ee097ce11528fe3b58540f05c147"
                     )?,
                     size: 12184,
@@ -532,12 +531,12 @@ mod test {
             vec![
                 DebianSourceControlFileEntry {
                     filename: "libzstd_1.4.8+dfsg.orig.tar.xz",
-                    digest: ContentDigest::md5_hex("943bed8b8d98a50c8d8a101b12693bb4")?,
+                    digest: DebContentDigest::md5_hex("943bed8b8d98a50c8d8a101b12693bb4")?,
                     size: 1331996,
                 },
                 DebianSourceControlFileEntry {
                     filename: "libzstd_1.4.8+dfsg-3.debian.tar.xz",
-                    digest: ContentDigest::md5_hex("4d2692830e1f481ce769e2dd24cbc9db")?,
+                    digest: DebContentDigest::md5_hex("4d2692830e1f481ce769e2dd24cbc9db")?,
                     size: 12184,
                 }
             ]

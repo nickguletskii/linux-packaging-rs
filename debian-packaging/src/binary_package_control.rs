@@ -9,12 +9,12 @@ use {
         control::ControlParagraph,
         dependency::{DependencyList, PackageDependencyFields},
         error::{DebianError, Result},
-        io::ContentDigest,
         package_version::PackageVersion,
-        repository::{builder::DebPackageReference, release::ChecksumType},
+        repository::builder::DebPackageReference,
     },
     std::ops::{Deref, DerefMut},
 };
+use crate::checksum::{DebChecksumType, DebContentDigest};
 
 /// A Debian binary package control file/paragraph.
 ///
@@ -172,7 +172,7 @@ impl<'cf, 'a: 'cf> DebPackageReference<'cf> for BinaryPackageControlFile<'a> {
             .ok_or_else(|| DebianError::ControlRequiredFieldMissing("Size".to_string()))?
     }
 
-    fn deb_digest(&self, checksum: ChecksumType) -> Result<ContentDigest> {
+    fn deb_digest(&self, checksum: DebChecksumType) -> Result<DebContentDigest> {
         let hex_digest = self
             .paragraph
             .field_str(checksum.field_name())
@@ -180,7 +180,7 @@ impl<'cf, 'a: 'cf> DebPackageReference<'cf> for BinaryPackageControlFile<'a> {
                 DebianError::ControlRequiredFieldMissing(checksum.field_name().to_string())
             })?;
 
-        ContentDigest::from_hex_digest(checksum, hex_digest)
+        DebContentDigest::from_hex_digest(checksum, hex_digest)
     }
 
     fn deb_filename(&self) -> Result<String> {

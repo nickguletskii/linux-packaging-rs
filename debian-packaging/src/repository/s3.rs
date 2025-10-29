@@ -5,7 +5,7 @@
 use {
     crate::{
         error::{DebianError, Result},
-        io::{ContentDigest, MultiDigester},
+        io::MultiDigester,
         repository::{
             RepositoryPathVerification, RepositoryPathVerificationState, RepositoryWrite,
             RepositoryWriter,
@@ -21,6 +21,7 @@ use {
     std::{borrow::Cow, pin::Pin, str::FromStr},
     tokio::io::AsyncReadExt as TokioAsyncReadExt,
 };
+use crate::checksum::{AnyContentDigest, DebContentDigest};
 
 pub struct S3Writer {
     client: S3Client,
@@ -71,7 +72,7 @@ impl RepositoryWriter for S3Writer {
     async fn verify_path<'path>(
         &self,
         path: &'path str,
-        expected_content: Option<(u64, ContentDigest)>,
+        expected_content: Option<(u64, AnyContentDigest)>,
     ) -> Result<RepositoryPathVerification<'path>> {
         if let Some((expected_size, expected_digest)) = expected_content {
             let req = GetObjectRequest {
@@ -93,6 +94,14 @@ impl RepositoryWriter for S3Writer {
                     }
 
                     if let Some(body) = output.body {
+                        let Ok(expected_digest) =
+                            crate::checksum::DebContentDigest::try_from(expected_digest)
+                        else {
+                            return Ok(RepositoryPathVerification {
+                                path,
+                                state: RepositoryPathVerificationState::ExistsIntegrityMismatch,
+                            });
+                        };
                         let mut digester = MultiDigester::default();
 
                         let mut remaining = expected_size;

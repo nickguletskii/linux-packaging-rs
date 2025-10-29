@@ -208,9 +208,9 @@ mod test {
         super::*,
         crate::{
             dependency::BinaryDependency, dependency_resolution::DependencyResolver, error::Result,
-            io::ContentDigest, repository::release::ChecksumType,
         },
     };
+    use crate::checksum::{AnyContentDigest, DebChecksumType, DebContentDigest};
 
     const BULLSEYE_URL: &str = "http://snapshot.debian.org/archive/debian/20211120T085721Z";
 
@@ -281,7 +281,7 @@ mod test {
         assert_eq!(entry.path, "main/source/Sources.xz");
         assert_eq!(
             entry.digest,
-            ContentDigest::sha256_hex(
+            AnyContentDigest::sha256_hex(
                 "1801d18c1135168d5dd86a8cb85fb5cd5bd81e16174acc25d900dee11389e9cd"
             )
             .unwrap()
@@ -323,7 +323,7 @@ mod test {
             for entry in source.files()? {
                 entry?;
             }
-            for fetch in source.file_fetches(ChecksumType::Sha256)? {
+            for fetch in source.file_fetches(DebChecksumType::Sha256)? {
                 fetch?;
             }
         }

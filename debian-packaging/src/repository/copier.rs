@@ -7,7 +7,6 @@
 use {
     crate::{
         error::{DebianError, Result},
-        io::ContentDigest,
         repository::{
             reader_from_str, writer_from_str, CopyPhase, PublishEvent, ReleaseReader,
             RepositoryRootReader, RepositoryWriteOperation, RepositoryWriter,
@@ -16,6 +15,8 @@ use {
     futures::StreamExt,
     serde::{Deserialize, Serialize},
 };
+use crate::checksum::DebContentDigest;
+use crate::checksum::AnyContentDigest;
 
 /// Well-known files at the root of distribution/release directories.
 const RELEASE_FILES: &[&str; 4] = &["ChangeLog", "InRelease", "Release", "Release.gpg"];
@@ -68,7 +69,7 @@ pub struct RepositoryCopierConfig {
 struct GenericCopy {
     source_path: String,
     dest_path: String,
-    expected_content: Option<(u64, ContentDigest)>,
+    expected_content: Option<(u64, AnyContentDigest)>,
 }
 
 /// Entity for copying Debian repository content.
@@ -417,7 +418,7 @@ impl RepositoryCopier {
             .map(|bpf| GenericCopy {
                 source_path: bpf.path.clone(),
                 dest_path: bpf.path,
-                expected_content: Some((bpf.size, bpf.digest)),
+                expected_content: Some((bpf.size, bpf.digest.into())),
             })
             .collect::<Vec<_>>();
 
@@ -463,7 +464,7 @@ impl RepositoryCopier {
             .map(|spf| GenericCopy {
                 source_path: spf.path.clone(),
                 dest_path: spf.path.clone(),
-                expected_content: Some((spf.size, spf.digest.clone())),
+                expected_content: Some((spf.size, spf.digest.clone().into())),
             })
             .collect::<Vec<_>>();
 
