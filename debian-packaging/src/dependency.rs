@@ -29,7 +29,7 @@ pub static RE_DEPENDENCY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?x)
         # Package name is alphanumeric, terminating at whitespace, [ or (
-        (?P<package>[^\s\[(:]+)
+        (?P<package>[^\s\[(]+)
         # Any number of optional spaces.
         \s*
         # Each package name is optionally followed by an architecture qualifier appended after a colon ‘:’
