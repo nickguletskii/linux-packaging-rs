@@ -27,9 +27,9 @@ use {
 pub static RE_DEPENDENCY: Lazy<Regex> = Lazy::new(|| {
     // TODO <> is a legacy syntax.
     Regex::new(
-        r"(?x)
+        r"^(?x)
         # Package name is alphanumeric, terminating at whitespace, [ or (
-        (?P<package>[^\s\[(]+)
+        (?P<package>[^\s\[(:]+)
         # Any number of optional spaces.
         \s*
         # Each package name is optionally followed by an architecture qualifier appended after a colon ‘:’
@@ -67,9 +67,9 @@ pub static RE_DEPENDENCY: Lazy<Regex> = Lazy::new(|| {
             # The architecture. May have spaces to delimit multiple values.
             (?P<arch>[^\]]+)
         \])?
-        ",
+        $",
     )
-    .unwrap()
+        .unwrap()
 });
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -170,29 +170,32 @@ impl SingleDependency {
             )),
             _ => None,
         };
-        let architectures = match (
-            architectures_inline,
-            caps.name("arch_negate"),
-            caps.name("arch"),
-        ) {
-            (None, Some(_), Some(arch)) => Some((
-                true,
+        let architectures = match (architectures_inline, caps.name("arch")) {
+            (None, Some(arch)) => Some((
+                caps.name("arch_negate").is_some(),
                 arch.as_str()
                     .split_ascii_whitespace()
                     .map(|x| x.to_string())
                     .collect::<Vec<_>>(),
             )),
-            (None, None, Some(arch)) => Some((
-                false,
-                arch.as_str()
-                    .split_ascii_whitespace()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>(),
-            )),
-            (Some(_), _, Some(arch)) => {
-                return Err(DebianError::DependencyParse(s.to_string()));
+            (Some((_, inline_arch)), Some(arch)) => {
+                if inline_arch.len() == 1
+                    && (inline_arch[0] == "native"
+                        || inline_arch[0] == "all"
+                        || inline_arch[0] == "any")
+                {
+                    Some((
+                        caps.name("arch_negate").is_some(),
+                        arch.as_str()
+                            .split_ascii_whitespace()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<_>>(),
+                    ))
+                } else {
+                    return Err(DebianError::DependencyParse(s.to_string()));
+                }
             }
-            (architectures_inline, _, _) => architectures_inline,
+            (architectures_inline, _) => architectures_inline,
         };
 
         Ok(Self {
@@ -661,6 +664,26 @@ mod test {
                 package: "libc".into(),
                 version_constraint: None,
                 architectures: Some((true, vec!["amd64".into(), "i386".into()])),
+            }
+        );
+
+        let dl = DependencyList::parse(
+            "binutils-hppa64-linux-gnu:native (>= 2.35.1-7) [hppa amd64 i386 x32]",
+        )?;
+        assert_eq!(dl.dependencies.len(), 1);
+        assert_eq!(dl.dependencies[0].0.len(), 1);
+        assert_eq!(
+            dl.dependencies[0].0[0],
+            SingleDependency {
+                package: "binutils-hppa64-linux-gnu".into(),
+                version_constraint: Some(DependencyVersionConstraint {
+                    relationship: VersionRelationship::LaterOrEqual,
+                    version: PackageVersion::parse("2.35.1-7").unwrap()
+                }),
+                architectures: Some((
+                    false,
+                    vec!["hppa".into(), "amd64".into(), "i386".into(), "x32".into()]
+                )),
             }
         );
 
