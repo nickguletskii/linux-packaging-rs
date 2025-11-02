@@ -17,7 +17,7 @@ use {
         str::FromStr,
     },
 };
-use crate::checksum::{DebChecksumType, DebContentDigest};
+use crate::checksum::{AnyChecksumType, DebChecksumType, DebContentDigest};
 
 /// A single file as described by a `Files` or `Checksums-*` field in a [DebianSourceControlFile].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -399,16 +399,17 @@ impl<'a> DebianSourceControlFile<'a> {
     /// source package.
     pub fn file_fetches(
         &self,
-        checksum: DebChecksumType,
+        checksum: AnyChecksumType,
     ) -> Result<Box<(dyn Iterator<Item = Result<DebianSourceControlFileFetch>> + '_)>> {
         let entries = match checksum {
-            DebChecksumType::Md5 => self.files()?,
-            DebChecksumType::Sha1 => self.checksums_sha1().ok_or_else(|| {
+            AnyChecksumType::Md5 => self.files()?,
+            AnyChecksumType::Sha1 => self.checksums_sha1().ok_or_else(|| {
                 DebianError::ControlRequiredFieldMissing("Checksums-Sha1".to_string())
             })?,
-            DebChecksumType::Sha256 => self.checksums_sha256().ok_or_else(|| {
+            AnyChecksumType::Sha256 => self.checksums_sha256().ok_or_else(|| {
                 DebianError::ControlRequiredFieldMissing("Checksums-Sha256".to_string())
             })?,
+            _ => Err(DebianError::ControlParseError("Unsupported checksum type".to_string()))?
         };
 
         Ok(Box::new(entries.map(move |entry| {

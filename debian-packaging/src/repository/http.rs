@@ -210,7 +210,7 @@ mod test {
             dependency::BinaryDependency, dependency_resolution::DependencyResolver, error::Result,
         },
     };
-    use crate::checksum::{AnyContentDigest, DebChecksumType, DebContentDigest};
+    use crate::checksum::{AnyChecksumType, AnyContentDigest, DebChecksumType, DebContentDigest};
 
     const BULLSEYE_URL: &str = "http://snapshot.debian.org/archive/debian/20211120T085721Z";
 
@@ -323,7 +323,7 @@ mod test {
             for entry in source.files()? {
                 entry?;
             }
-            for fetch in source.file_fetches(DebChecksumType::Sha256)? {
+            for fetch in source.file_fetches(AnyChecksumType::Sha256)? {
                 fetch?;
             }
         }

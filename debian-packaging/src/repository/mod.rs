@@ -277,13 +277,19 @@ pub trait ReleaseReader: DataResolver + Sync {
     ///
     /// By default, this will prefer the strongest known checksum advertised in the
     /// release file.
-    fn retrieve_checksum(&self) -> Result<DebChecksumType> {
+    fn retrieve_checksum(&self) -> Result<AnyChecksumType> {
         let release = self.release_file();
 
-        let checksum = &[DebChecksumType::Sha256, DebChecksumType::Sha1, DebChecksumType::Md5]
-            .iter()
-            .find(|variant| release.field(variant.field_name()).is_some())
-            .ok_or(DebianError::RepositoryReadReleaseNoKnownChecksum)?;
+        let checksum = &[
+            AnyChecksumType::Sha256,
+            AnyChecksumType::Sha1,
+            AnyChecksumType::Md5,
+            AnyChecksumType::Sha512,
+            AnyChecksumType::Sha384,
+        ]
+        .iter()
+        .find(|variant| release.field(variant.field_name()).is_some())
+        .ok_or(DebianError::RepositoryReadReleaseNoKnownChecksum)?;
 
         Ok(**checksum)
     }
