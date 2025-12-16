@@ -83,13 +83,14 @@ impl PackageVersion {
         if !upstream.chars().all(|c| match c {
             c if c.is_ascii_alphanumeric() => true,
             '.' | '+' | '~' => true,
+            ':' => true, // Errors by the Ubuntu packaging team: clang packages have `Replaces: clang-19 (<< 1:19:1.7-5)`
             '-' => debian.is_some(),
             _ => false,
         }) {
             return Err(DebianError::UpstreamVersionIllegalChar(s.to_string()));
         }
-
-        let upstream_version = upstream.to_string();
+        // Work around errors by the Ubuntu packaging team: clang packages have `Replaces: clang-19 (<< 1:19:1.7-5)`
+        let upstream_version = upstream.replace(":", ".");
 
         let debian_revision = if let Some(debian) = debian {
             // It must contain only alphanumerics and the characters + . ~ (plus, full stop, tilde)
@@ -377,6 +378,14 @@ mod test {
                 epoch: None,
                 upstream_version: "0.18.0+dfsg".into(),
                 debian_revision: Some("2+b1".into())
+            }
+        );
+        assert_eq!(
+            PackageVersion::parse("1:19:1.7-5")?,
+            PackageVersion {
+                epoch: Some(1),
+                upstream_version: "19.1.7".into(),
+                debian_revision: Some("5".into())
             }
         );
 
